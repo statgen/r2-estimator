@@ -135,7 +135,7 @@ int main()
       float r2 = 0;
 
       if (af > 0.f && af < 1.f)
-        r2 = (sos / hap_dosages.size()) / (2.f * af * (1.f - af));
+        r2 = (sos / hap_dosages.size()) / (af * (1.f - af));
 
       std::ostringstream af_ss;
       af_ss << af;
