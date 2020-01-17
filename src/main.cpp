@@ -73,7 +73,7 @@ std::string to_rounded_string(float val)
 
 int main()
 {
-  std::string sample_groups_path = "sample_groups.txt";
+  //std::string sample_groups_path = "sample_groups.txt";
   std::string input_path = "chr12.dose.vcf.gz";
   std::string output_path = "/dev/stdout";
 
@@ -82,7 +82,7 @@ int main()
   std::vector<float> hap_dosages;
   savvy::reader input_file(input_path, savvy::fmt::hds);
 
-  std::list<std::pair<std::string, std::vector<std::size_t>>> groups = parse_groups_file(sample_groups_path, input_file.samples());
+  std::list<std::pair<std::string, std::vector<std::size_t>>> groups = {}; //parse_groups_file(sample_groups_path, input_file.samples());
 
   std::vector<std::pair<std::string, std::string>> headers(input_file.headers().size() + 2 + (groups.size() * 2));
 
