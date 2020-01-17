@@ -3,9 +3,7 @@ project(r2-estimator)
 
 set(CMAKE_CXX_STANDARD 11)
 
-if (NOT BUILD_SHARED_LIBS)
-    set(CMAKE_FIND_LIBRARY_SUFFIXES ".a;${CMAKE_FIND_LIBRARY_SUFFIXES}") # Prefer libz.a when both are available
-endif()
+set(CMAKE_FIND_LIBRARY_SUFFIXES ".a;${CMAKE_FIND_LIBRARY_SUFFIXES}") # Prefer libz.a when both are available
 
 find_library(SAVVY_LIB savvy)
 find_library(Z_LIB z)
