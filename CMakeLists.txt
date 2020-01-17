@@ -9,8 +9,9 @@ find_library(SAVVY_LIB savvy)
 find_library(Z_LIB z)
 find_library(ZSTD_LIB zstd)
 find_library(HTS_LIB hts)
+find_package(Threads)
 
 add_executable(r2-estimator src/main.cpp)
-target_link_libraries(r2-estimator ${SAVVY_LIB} ${HTS_LIB} ${Z_LIB} ${ZSTD_LIB})
+target_link_libraries(r2-estimator ${SAVVY_LIB} ${HTS_LIB} ${Z_LIB} ${ZSTD_LIB} ${CMAKE_THREAD_LIBS_INIT})
 
 install(TARGETS r2-estimator RUNTIME DESTINATION bin)
