@@ -12,7 +12,7 @@ find_library(Z_LIB z)
 find_library(ZSTD_LIB zstd)
 find_library(HTS_LIB hts)
 
-add_executable(r2-estimator src/main.cpp include/join_iterator.hpp)
+add_executable(r2-estimator src/main.cpp)
 target_link_libraries(r2-estimator ${SAVVY_LIB} ${Z_LIB} ${ZSTD_LIB} ${HTS_LIB})
 
 install(TARGETS r2-estimator RUNTIME DESTINATION bin)
