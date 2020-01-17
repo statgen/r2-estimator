@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cctype>
 #include <unordered_map>
+#include <getopt.h>
 
 float square(float val)
 {
@@ -71,16 +72,100 @@ std::string to_rounded_string(float val)
   return ret;
 }
 
-int main()
+class prog_args
 {
-  //std::string sample_groups_path = "sample_groups.txt";
-  std::string input_path = "chr12.dose.vcf.gz";
-  std::string output_path = "/dev/stdout";
+private:
+  std::vector<option> long_options_;
+  std::string input_path_;
+  std::string output_path_ = "/dev/stdout";
+  float filter_threshold_ = 0.f;
+  bool help_ = false;
+public:
+  prog_args() :
+    long_options_(
+      {
+        {"filter-threshold", required_argument, 0, 't'},
+        {"help", no_argument, 0, 'h'},
+        {0, 0, 0, 0}
+      })
+  {
+  }
+
+  const std::string& input_path() const { return input_path_; }
+  const std::string& output_path() const { return output_path_; }
+  float filter_threshold() const { return filter_threshold_; }
+  bool help_is_set() const { return help_; }
+
+  void print_usage(std::ostream& os)
+  {
+    os << "Usage: ld-stats [opts ...] <in.{sav,bcf,vcf.gz}> \n";
+    os << "or: ld-stats [opts ...] --from-existing <in.ld.tsv> \n";
+    os << "\n";
+    os << " -h, --help              Print usage\n";
+    os << " -t, --filter-threshold  List of known sites to compute aggregate stats against\n";
+    os << std::flush;
+  }
+
+  bool parse(int argc, char** argv)
+  {
+    int long_index = 0;
+    int opt = 0;
+    while ((opt = getopt_long(argc, argv, "ht:", long_options_.data(), &long_index )) != -1)
+    {
+      char copt = char(opt & 0xFF);
+      switch (copt)
+      {
+      case 'h':
+        help_ = true;
+        return true;
+      case 't':
+        filter_threshold_ = std::max(0., std::min(1., atof(optarg ? optarg : "")));
+        break;
+      default:
+        return false;
+      }
+    }
+
+    int remaining_arg_count = argc - optind;
+
+    if (remaining_arg_count == 1)
+    {
+      input_path_ = argv[optind];
+    }
+    else if (remaining_arg_count < 1)
+    {
+      std::cerr << "Too few arguments\n";
+      return false;
+    }
+    else
+    {
+      std::cerr << "Too many arguments\n";
+      return false;
+    }
+
+    return true;
+  }
+};
+
+int main(int argc, char** argv)
+{
+  prog_args args;
+  if (!args.parse(argc, argv))
+  {
+    args.print_usage(std::cerr);
+    return EXIT_FAILURE;
+  }
+
+  if (args.help_is_set())
+  {
+    args.print_usage(std::cout);
+    return EXIT_SUCCESS;
+  }
 
 
   savvy::site_info site;
   std::vector<float> hap_dosages;
-  savvy::reader input_file(input_path, savvy::fmt::hds);
+  savvy::reader input_file(args.input_path(), savvy::fmt::hds);
 
   std::list<std::pair<std::string, std::vector<std::size_t>>> groups = {}; //parse_groups_file(sample_groups_path, input_file.samples());
 
@@ -106,7 +191,7 @@ int main()
 
   headers.erase(next_it, headers.end());
 
-  savvy::sav::writer output_file(output_path, input_file.samples().begin(), input_file.samples().end(), headers.begin(), headers.end(), savvy::fmt::hds);
+  savvy::sav::writer output_file(args.output_path(), input_file.samples().begin(), input_file.samples().end(), headers.begin(), headers.end(), savvy::fmt::hds);
 
 
   while (input_file.read(site, hap_dosages))
@@ -136,6 +221,9 @@ int main()
 
       if (af > 0.f && af < 1.f)
         r2 = (sos / hap_dosages.size()) / (af * (1.f - af));
+
+      if (r2 < args.filter_threshold())
+        continue;
 
       std::ostringstream af_ss;
       af_ss << af;
@@ -168,7 +256,7 @@ int main()
         float r2 = 0;
 
         if (af > 0.f && af < 1.f)
-          r2 = (sos / (grp->second.size() * ploidy)) / (2.f * af * (1.f - af));
+          r2 = (sos / (grp->second.size() * ploidy)) / (af * (1.f - af));
 
         std::ostringstream af_ss;
         af_ss << af;
