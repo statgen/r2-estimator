@@ -1,5 +1,7 @@
 
 #include <savvy/reader.hpp>
+#include <savvy/writer.hpp>
+
 #include <sstream>
 #include <fstream>
 #include <iomanip>
@@ -78,6 +80,7 @@ private:
   std::vector<option> long_options_;
   std::string input_path_;
   std::string output_path_ = "/dev/stdout";
+  savvy::file::format output_format_ = savvy::file::format::sav2;
   float filter_threshold_ = 0.f;
   bool help_ = false;
 public:
@@ -85,6 +88,8 @@ public:
     long_options_(
       {
         {"filter-threshold", required_argument, 0, 't'},
+        {"output", required_argument, 0, 'o'},
+        {"output-format", required_argument, 0, 'O'},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
       })
@@ -93,15 +98,17 @@ public:
 
   const std::string& input_path() const { return input_path_; }
   const std::string& output_path() const { return output_path_; }
+  savvy::file::format output_format() const { return output_format_; }
   float filter_threshold() const { return filter_threshold_; }
   bool help_is_set() const { return help_; }
 
   void print_usage(std::ostream& os)
   {
-    os << "Usage: ld-stats [opts ...] <in.{sav,bcf,vcf.gz}> \n";
-    os << "or: ld-stats [opts ...] --from-existing <in.ld.tsv> \n";
+    os << "Usage: r2-estimator [opts ...] <in.{sav,bcf,vcf.gz}> \n";
     os << "\n";
     os << " -h, --help              Print usage\n";
+    os << " -o, --output            Path to output file (default: /dev/stdout)\n";
+    os << " -O, --output-format     Output file format (sav, bcf, or vcf; default: sav)\n";
     os << " -t, --filter-threshold  List of known sites to compute aggregate stats against\n";
     os << std::flush;
   }
@@ -110,14 +117,31 @@ public:
   {
     int long_index = 0;
     int opt = 0;
-    while ((opt = getopt_long(argc, argv, "ht:", long_options_.data(), &long_index )) != -1)
+    while ((opt = getopt_long(argc, argv, "ho:O:t:", long_options_.data(), &long_index )) != -1)
     {
+      std::string optarg_str = optarg ? optarg : "";
       char copt = char(opt & 0xFF);
       switch (copt)
       {
       case 'h':
         help_ = true;
         return true;
+      case 'o':
+        output_path_ = optarg_str;
+        break;
+      case 'O':
+        if (optarg_str == "sav")
+          output_format_ = savvy::file::format::sav2;
+        else if (optarg_str == "bcf")
+          output_format_ = savvy::file::format::bcf;
+        else if (optarg_str == "vcf")
+          output_format_ = savvy::file::format::vcf;
+        else
+        {
+          std::cerr << "Error: invalid --output-format: " << optarg_str << std::endl;
+          return false;
+        }
+        break;
       case 't':
         filter_threshold_ = std::max(0., std::min(1., atof(optarg ? optarg : "")));
         break;
@@ -163,61 +187,70 @@ int main(int argc, char** argv)
   }
 
 
-  savvy::site_info site;
+  savvy::v2::variant var;
   std::vector<float> hap_dosages;
-  savvy::reader input_file(args.input_path(), savvy::fmt::hds);
+  savvy::v2::reader input_file(args.input_path());
+
+  if (!input_file)
+  {
+    std::cerr << "Error: failed to open input file (" << args.input_path() << ")" << std::endl;
+    return EXIT_FAILURE;
+  }
 
   std::list<std::pair<std::string, std::vector<std::size_t>>> groups = {}; //parse_groups_file(sample_groups_path, input_file.samples());
 
-  std::vector<std::pair<std::string, std::string>> headers(input_file.headers().size() + 2 + (groups.size() * 2));
-
-  headers[0] = {"INFO","<ID=AF,Number=1,Type=Float,Description=\"Allele Frequency\">"};
-  headers[1] = {"INFO","<ID=R2,Number=1,Type=Float,Description=\"R-squared Estimate\">"};
-
-  {
-    std::size_t i = 0;
-    for (auto grp = groups.begin(); grp != groups.end(); ++grp,++i)
-    {
-      headers[2 + i * 2] = {"INFO","<ID=AF_" + grp->first + ",Number=1,Type=Float,Description=\"Allele Frequency (" + grp->first + ")\">"};
-      headers[2 + i * 2 + 1] = {"INFO","<ID=R2_" + grp->first + ",Number=1,Type=Float,Description=\"R-squared Estimate (" + grp->first + ")\">"};
-    }
-  }
-
-  auto next_it = std::copy_if(input_file.headers().begin(), input_file.headers().end(), headers.begin() + 2 + (groups.size() * 2), [](const std::pair<std::string, std::string>& h)
+  std::vector<std::pair<std::string, std::string>> headers;
+  headers.reserve(input_file.headers().size() + 2 + (groups.size() * 2));
+  headers.resize(input_file.headers().size());
+  bool maf_header_present = false;
+  auto next_it = std::copy_if(input_file.headers().begin(), input_file.headers().end(), headers.begin(), [&maf_header_present](const std::pair<std::string, std::string>& h)
   {
     auto details = savvy::parse_header_value(h.second);
+    if (details.id == "MAF")
+      maf_header_present = true;
     return (details.id != "AF" && details.id  != "R2");
   });
 
   headers.erase(next_it, headers.end());
 
-  savvy::sav::writer output_file(args.output_path(), input_file.samples().begin(), input_file.samples().end(), headers.begin(), headers.end(), savvy::fmt::hds);
+  headers.emplace_back("INFO","<ID=AF,Number=1,Type=Float,Description=\"Allele Frequency\">");
+  headers.emplace_back("INFO","<ID=R2,Number=1,Type=Float,Description=\"R-squared Estimate\">");
 
-
-  while (input_file.read(site, hap_dosages))
+  for (auto grp = groups.begin(); grp != groups.end(); ++grp)
   {
-    // if you have 'K' haplotypes (not samples), each with a HDS value, then the estimated R2 = Var(K)/[2p(1-p)] where p is the allele frequency.
+    headers.emplace_back("INFO","<ID=AF_" + grp->first + ",Number=1,Type=Float,Description=\"Allele Frequency (" + grp->first + ")\">");
+    headers.emplace_back("INFO","<ID=R2_" + grp->first + ",Number=1,Type=Float,Description=\"R-squared Estimate (" + grp->first + ")\">");
+  }
+
+  savvy::v2::writer output_file(args.output_path(), args.output_format(), headers, input_file.samples());
+  if (!output_file)
+  {
+    std::cerr << "Error: failed to open output file (" << args.output_path() << ")" << std::endl;
+    return EXIT_FAILURE;
+  }
+
+  while (input_file >> var)
+  {
+    if (!var.get_format("HDS", hap_dosages))
+    {
+      std::cerr << "Error: HDS not present\n";
+      return EXIT_FAILURE;
+    }
+    // if you have 'K' haplotypes (not samples), each with a HDS value, then the estimated R2 = Var(K)/[p(1-p)] where p is the allele frequency.
 
     const std::size_t ploidy = hap_dosages.size() / input_file.samples().size();
 
-    std::unordered_map<std::string, std::string> props;
-    for (const auto& info_field : input_file.info_fields())
     {
-      std::string tmp = site.prop(info_field);
-      props[info_field] = site.prop(info_field);
-    }
+      double af = std::accumulate(hap_dosages.begin(), hap_dosages.end(), 0.) / hap_dosages.size();
 
-    {
-      float af = std::accumulate(hap_dosages.begin(), hap_dosages.end(), 0.f) / hap_dosages.size();
-
-      float sos = 0.f;
+      double sos = 0.f;
 
       for (auto it = hap_dosages.begin(); it != hap_dosages.end(); it++)
       {
         sos += square(*it - af);
       }
 
-      float r2 = 0;
+      double r2 = 0;
 
       if (af > 0.f && af < 1.f)
         r2 = (sos / hap_dosages.size()) / (af * (1.f - af));
@@ -225,17 +258,17 @@ int main(int argc, char** argv)
       if (r2 < args.filter_threshold())
         continue;
 
-      std::ostringstream af_ss;
-      af_ss << af;
-      props["AF"] = af_ss.str();
-      props["R2"] = std::to_string(r2);
+      var.set_info("AF", (float)af);
+      var.set_info("R2", (float)r2);
+      if (maf_header_present)
+        var.set_info("MAF", static_cast<float>(af > 0.5 ? 1. - af : af));;
     }
 
     for (auto grp = groups.begin(); grp != groups.end(); ++grp)
     {
       if (grp->second.size())
       {
-        float af = 0.f;
+        double af = 0.f;
 
         for (auto it = grp->second.begin(); it != grp->second.end(); ++it)
         {
@@ -245,7 +278,7 @@ int main(int argc, char** argv)
 
         af = af / (grp->second.size() * ploidy);
 
-        float sos = 0.f;
+        double sos = 0.f;
 
         for (auto it = grp->second.begin(); it != grp->second.end(); it++)
         {
@@ -253,22 +286,21 @@ int main(int argc, char** argv)
             sos += square(hap_dosages[*it + h] - af);
         }
 
-        float r2 = 0;
+        double r2 = 0;
 
         if (af > 0.f && af < 1.f)
           r2 = (sos / (grp->second.size() * ploidy)) / (af * (1.f - af));
 
         std::ostringstream af_ss;
         af_ss << af;
-        props["AF_" + grp->first] = af_ss.str();
-        props["R2_" + grp->first] = std::to_string(r2);
+        var.set_info("AF_" + grp->first, (float)af);
+        var.set_info("R2_" + grp->first, (float)r2);
       }
     }
 
 
 
-    savvy::site_info out_site(std::string(site.chromosome()), site.position(), std::string(site.ref()), std::string(site.alt()), std::move(props));
-    output_file.write(out_site, hap_dosages);
+    output_file << var;
 
 
     //std::cerr << std::to_string(r2) << " | " << af_ss.str() << std::endl;
