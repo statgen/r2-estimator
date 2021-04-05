@@ -12,6 +12,7 @@ Usage: r2-estimator [opts ...] <in.{sav,bcf,vcf.gz}>
 ## Build and Install
 ```shell
 # cget available in pip3
+cget ignore xz
 cget install -f requirements.txt
 mkdir build; cd build
 cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=../cget/cget/cget.cmake -DCMAKE_INSTALL_PREFIX=<instal_prefix> ..
