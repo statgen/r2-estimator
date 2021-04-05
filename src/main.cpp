@@ -109,7 +109,7 @@ public:
     os << " -h, --help              Print usage\n";
     os << " -o, --output            Path to output file (default: /dev/stdout)\n";
     os << " -O, --output-format     Output file format (sav, bcf, or vcf; default: sav)\n";
-    os << " -t, --filter-threshold  List of known sites to compute aggregate stats against\n";
+    os << " -t, --filter-threshold  Minimum r-squared threshold for output\n";
     os << std::flush;
   }
 
@@ -187,9 +187,9 @@ int main(int argc, char** argv)
   }
 
 
-  savvy::v2::variant var;
+  savvy::variant var;
   std::vector<float> hap_dosages;
-  savvy::v2::reader input_file(args.input_path());
+  savvy::reader input_file(args.input_path());
 
   if (!input_file)
   {
@@ -222,7 +222,7 @@ int main(int argc, char** argv)
     headers.emplace_back("INFO","<ID=R2_" + grp->first + ",Number=1,Type=Float,Description=\"R-squared Estimate (" + grp->first + ")\">");
   }
 
-  savvy::v2::writer output_file(args.output_path(), args.output_format(), headers, input_file.samples());
+  savvy::writer output_file(args.output_path(), args.output_format(), headers, input_file.samples());
   if (!output_file)
   {
     std::cerr << "Error: failed to open output file (" << args.output_path() << ")" << std::endl;
